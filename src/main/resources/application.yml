@@ -1,6 +1,13 @@
 spring:
   application:
     name: He-AI-zero-code-generation
+  # mysql
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/ai_zero_code_generation
+    username: root
+    password: root
+
 server:
   port: 8123
   servlet:
