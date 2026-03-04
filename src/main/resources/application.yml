@@ -1,18 +1,31 @@
 spring:
   application:
     name: He-AI-zero-code-generation
+  session:
+    store-type: redis
+    timeout: 2592000
   # mysql
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/ai_zero_code_generation
     username: root
     password: root
+  # redis
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password:
+      ttl: 3600
   profiles:
     active: local
 server:
   port: 8123
   servlet:
     context-path: /api
+    session:
+      cookie:
+        max-age: 2592000
 # springdoc-openapi
 springdoc:
   group-configs:

@@ -5,7 +5,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
 import com.miachoose.aizerocodegeneration.exception.BusinessException;
 import com.miachoose.aizerocodegeneration.exception.ErrorCode;
-import com.miachoose.aizerocodegeneration.model.dto.UserQueryRequest;
+import com.miachoose.aizerocodegeneration.model.dto.user.UserQueryRequest;
 import com.miachoose.aizerocodegeneration.model.enums.UserRoleEnum;
 import com.miachoose.aizerocodegeneration.model.vo.LoginUserVO;
 import com.miachoose.aizerocodegeneration.model.vo.UserVO;
@@ -27,7 +27,7 @@ import static com.miachoose.aizerocodegeneration.constant.UserConstant.USER_LOGI
 /**
  * 用户 服务层实现。
  *
- * @author <a href="https://github.com/MiaChoose">程序员鱼皮</a>
+ * @author
  */
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User>  implements UserService {

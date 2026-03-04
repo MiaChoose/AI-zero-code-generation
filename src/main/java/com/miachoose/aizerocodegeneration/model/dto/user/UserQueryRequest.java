@@ -1,4 +1,4 @@
-package com.miachoose.aizerocodegeneration.model.dto;
+package com.miachoose.aizerocodegeneration.model.dto.user;
 
 import com.miachoose.aizerocodegeneration.common.PageRequest;
 import lombok.Data;

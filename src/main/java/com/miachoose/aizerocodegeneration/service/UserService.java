@@ -1,6 +1,6 @@
 package com.miachoose.aizerocodegeneration.service;
 
-import com.miachoose.aizerocodegeneration.model.dto.UserQueryRequest;
+import com.miachoose.aizerocodegeneration.model.dto.user.UserQueryRequest;
 import com.miachoose.aizerocodegeneration.model.entity.App;
 import com.miachoose.aizerocodegeneration.model.vo.LoginUserVO;
 import com.miachoose.aizerocodegeneration.model.vo.UserVO;
@@ -14,7 +14,7 @@ import java.util.List;
 /**
  * 用户 服务层。
  *
- * @author <a href="https://github.com/MiaChoose">程序员鱼皮</a>
+ * @author
  */
 public interface UserService extends IService<User> {
     /**
@@ -68,13 +68,4 @@ public interface UserService extends IService<User> {
     List<UserVO> getUserVOList(List<User> userList);
 
     QueryWrapper getQueryWrapper(UserQueryRequest userQueryRequest);
-
-    /**
-     * 应用 服务层。
-     *
-     * @author <a href="https://github.com/MiaChoose">MiaChoose</a>
-     */
-    interface AppService extends IService<App> {
-
-    }
 }
