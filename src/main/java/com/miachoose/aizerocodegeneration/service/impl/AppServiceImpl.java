@@ -7,6 +7,7 @@ import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import com.miachoose.aizerocodegeneration.constant.AppConstant;
 import com.miachoose.aizerocodegeneration.core.AiCodeGeneratorFacade;
+import com.miachoose.aizerocodegeneration.core.handler.StreamHandlerExecutor;
 import com.miachoose.aizerocodegeneration.core.parser.CodeParserExecutor;
 import com.miachoose.aizerocodegeneration.core.saver.CodeFileSaverExecutor;
 import com.miachoose.aizerocodegeneration.exception.BusinessException;
@@ -58,6 +59,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     @Resource
     private AiCodeGeneratorFacade aiCodeGeneratorFacade;
 
+    @Resource
+    private StreamHandlerExecutor streamHandlerExecutor;
+
     @Override
     public Flux<String> chatToGenCode(Long appId, String message, User loginUser) {
         // 1. 参数校验
@@ -88,23 +92,11 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
         // 7. 调用 AI 生成代码（流式）
         Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
 //        // 8. 收集 AI 响应的内容，并且在完成后保存记录到对话历史
-//        return streamHandlerExecutor.doExecute(codeStream, chatHistoryService, appId, loginUser, codeGenTypeEnum)
+        return streamHandlerExecutor.doExecute(codeStream, chatHistoryService, appId, loginUser, codeGenTypeEnum);
 //                .doFinally(signalType -> {
 //                    // 流结束时清理（无论成功/失败/取消）
 //                    MonitorContextHolder.clearContext();
 //                });
-        StringBuilder aiResponseBuilder = new StringBuilder();
-        return codeStream.map(chunk -> {
-            // 实时收集代码片段
-            aiResponseBuilder.append(chunk);
-            return chunk;
-        }).doOnComplete(() -> {
-            String aiResponse = aiResponseBuilder.toString();
-            chatHistoryService.addChatMessage(appId,aiResponse,ChatHistoryMessageTypeEnum.AI.getValue(),loginUser.getId());
-        }).doOnError(error ->{
-            String errorMessage = "AI回复失败" + error.getMessage();
-            chatHistoryService.addChatMessage(appId,errorMessage,ChatHistoryMessageTypeEnum.AI.getValue(),loginUser.getId());
-        });
     }
 
 
