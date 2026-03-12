@@ -11,8 +11,6 @@ import com.miachoose.aizerocodegeneration.constant.AppConstant;
 import com.miachoose.aizerocodegeneration.core.AiCodeGeneratorFacade;
 import com.miachoose.aizerocodegeneration.core.builder.VueProjectBuilder;
 import com.miachoose.aizerocodegeneration.core.handler.StreamHandlerExecutor;
-import com.miachoose.aizerocodegeneration.core.parser.CodeParserExecutor;
-import com.miachoose.aizerocodegeneration.core.saver.CodeFileSaverExecutor;
 import com.miachoose.aizerocodegeneration.exception.BusinessException;
 import com.miachoose.aizerocodegeneration.exception.ErrorCode;
 import com.miachoose.aizerocodegeneration.exception.ThrowUtils;
@@ -43,6 +41,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CancellationException;
 import java.util.stream.Collectors;
 
 /**
@@ -53,6 +53,10 @@ import java.util.stream.Collectors;
 @Service
 @Slf4j
 public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppService {
+    /**
+     * 正在运行的生成任务取消标记
+     */
+    private final Map<String, Boolean> cancelledTaskMap = new ConcurrentHashMap<>();
 
     @Resource
     private UserService userService;
@@ -72,6 +76,11 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
 
     @Override
     public Flux<String> chatToGenCode(Long appId, String message, User loginUser) {
+        return chatToGenCode(appId, message, "", loginUser);
+    }
+
+    @Override
+    public Flux<String> chatToGenCode(Long appId, String message, String generationId, User loginUser) {
         // 1. 参数校验
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 错误");
         ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "提示词不能为空");
@@ -98,13 +107,75 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
 //                        .build()
 //        );
         // 7. 调用 AI 生成代码（流式）
-        Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
+        String taskKey = buildGenerationTaskKey(appId, loginUser.getId(), generationId);
+        cancelledTaskMap.put(taskKey, false);
+        Flux<String> codeStream = aiCodeGeneratorFacade.generateAndSaveCodeStream(
+                message,
+                codeGenTypeEnum,
+                appId,
+                () -> isTaskCancelled(taskKey)
+        );
 //        // 8. 收集 AI 响应的内容，并且在完成后保存记录到对话历史
-        return streamHandlerExecutor.doExecute(codeStream, chatHistoryService, appId, loginUser, codeGenTypeEnum);
+        return streamHandlerExecutor
+                .doExecute(codeStream, chatHistoryService, appId, loginUser, codeGenTypeEnum)
+                .doOnNext(chunk -> {
+                    if (isTaskCancelled(taskKey)) {
+                        throw new CancellationException("generation cancelled by client");
+                    }
+                })
+                .doOnError(CancellationException.class, e ->
+                        log.info("生成任务已退出，taskKey={}, reason={}", taskKey, e.getMessage()))
+                .doFinally(signalType -> {
+                    // 对于取消场景，保留取消标记一段时间，拦截可能晚到的异步工具回调
+                    if (isTaskCancelled(taskKey)) {
+                        log.info("任务已取消，保留取消标记等待异步回调收敛，taskKey={}, signal={}", taskKey, signalType);
+                        return;
+                    }
+                    cancelledTaskMap.remove(taskKey);
+                });
 //                .doFinally(signalType -> {
 //                    // 流结束时清理（无论成功/失败/取消）
 //                    MonitorContextHolder.clearContext();
 //                });
+    }
+
+    @Override
+    public void cancelChatGeneration(Long appId, User loginUser) {
+        cancelChatGeneration(appId, "", loginUser);
+    }
+
+    @Override
+    public void cancelChatGeneration(Long appId, String generationId, User loginUser) {
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 错误");
+        ThrowUtils.throwIf(loginUser == null || loginUser.getId() == null, ErrorCode.NOT_LOGIN_ERROR, "用户未登录");
+        String taskKey = buildGenerationTaskKey(appId, loginUser.getId(), generationId);
+        cancelledTaskMap.put(taskKey, true);
+        log.info("收到取消生成请求，taskKey={}", taskKey);
+        // 延迟清理取消标记，避免模型/工具链尾部回调再次写文件
+        Thread.startVirtualThread(() -> {
+            try {
+                Thread.sleep(5 * 60 * 1000L);
+                cancelledTaskMap.remove(taskKey, true);
+                log.info("取消标记已延迟清理，taskKey={}", taskKey);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+    }
+
+    /**
+     * 构造任务唯一键
+     */
+    private String buildGenerationTaskKey(Long appId, Long userId, String generationId) {
+        String normalizedGenerationId = StrUtil.blankToDefault(generationId, "default");
+        return appId + "_" + userId + "_" + normalizedGenerationId;
+    }
+
+    /**
+     * 判断任务是否已被取消
+     */
+    private boolean isTaskCancelled(String taskKey) {
+        return Boolean.TRUE.equals(cancelledTaskMap.get(taskKey));
     }
 
 
@@ -201,14 +272,27 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App>  implements AppS
     public void generateAppScreenshotAsync(Long appId, String appUrl) {
         // 使用虚拟线程异步执行
         Thread.startVirtualThread(() -> {
-            // 调用截图服务生成截图并上传
-            String screenshotUrl = screenshotService.generateAndUploadScreenshot(appUrl);
-            // 更新应用封面字段
-            App updateApp = new App();
-            updateApp.setId(appId);
-            updateApp.setCover(screenshotUrl);
-            boolean updated = this.updateById(updateApp);
-            ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "更新应用封面字段失败");
+            try {
+                // 短暂等待，确保部署目录已可被本应用静态资源接口访问
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("截图任务被中断");
+                return;
+            }
+            try {
+                // 调用截图服务生成截图并上传
+                String screenshotUrl = screenshotService.generateAndUploadScreenshot(appUrl);
+                // 更新应用封面字段
+                App updateApp = new App();
+                updateApp.setId(appId);
+                updateApp.setCover(screenshotUrl);
+                boolean updated = this.updateById(updateApp);
+                ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "更新应用封面字段失败");
+            } catch (Exception e) {
+                // 截图属于异步增强能力，不应影响部署主流程
+                log.warn("异步生成应用截图失败，appId={}, url={}", appId, appUrl, e);
+            }
         });
     }
 

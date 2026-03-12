@@ -1,6 +1,9 @@
 package com.miachoose.aizerocodegeneration.ai.tools;
 
 import cn.hutool.json.JSONObject;
+import dev.langchain4j.service.StreamingCancellationRegistry;
+
+import java.util.concurrent.CancellationException;
 
 /**
  * 工具基类
@@ -38,4 +41,16 @@ public abstract class BaseTool {
      * @return 格式化的工具执行结果
      */
     public abstract String generateToolExecutedResult(JSONObject arguments);
+
+    /**
+     * 在工具执行前检查是否已取消，避免继续文件操作。
+     */
+    protected void throwIfCancelled(Long appId, String toolName) {
+        if (appId == null) {
+            return;
+        }
+        if (StreamingCancellationRegistry.isCancelled(appId)) {
+            throw new CancellationException("tool execution cancelled by client, tool=" + toolName + ", appId=" + appId);
+        }
+    }
 } 

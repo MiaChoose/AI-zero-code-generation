@@ -33,6 +33,7 @@ public class FileModifyTool extends BaseTool {
             @ToolMemoryId Long appId
     ) {
         try {
+            throwIfCancelled(appId, getToolName());
             Path path = Paths.get(relativeFilePath);
             if (!path.isAbsolute()) {
                 String projectDirName = "vue_project_" + appId;
@@ -50,6 +51,7 @@ public class FileModifyTool extends BaseTool {
             if (originalContent.equals(modifiedContent)) {
                 return "信息：替换后文件内容未发生变化 - " + relativeFilePath;
             }
+            throwIfCancelled(appId, getToolName());
             Files.writeString(path, modifiedContent, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             log.info("成功修改文件: {}", path.toAbsolutePath());
             return "文件修改成功: " + relativeFilePath;

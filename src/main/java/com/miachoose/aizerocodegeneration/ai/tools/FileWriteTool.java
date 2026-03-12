@@ -32,6 +32,7 @@ public class FileWriteTool extends BaseTool {
             @ToolMemoryId Long appId
     ) {
         try {
+            throwIfCancelled(appId, getToolName());
             Path path = Paths.get(relativeFilePath);
             if (!path.isAbsolute()) {
                 // 相对路径处理，创建基于 appId 的项目目录
@@ -44,6 +45,7 @@ public class FileWriteTool extends BaseTool {
             if (parentDir != null) {
                 Files.createDirectories(parentDir);
             }
+            throwIfCancelled(appId, getToolName());
             // 写入文件内容
             Files.write(path, content.getBytes(),
                     StandardOpenOption.CREATE,

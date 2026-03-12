@@ -22,7 +22,9 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static dev.langchain4j.internal.Utils.copy;
@@ -41,6 +43,7 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
     private final Object memoryId;
     private final GuardrailRequestParams commonGuardrailParams;
     private final Object methodKey;
+    private final BooleanSupplier cancelChecker;
 
     private final Consumer<String> partialResponseHandler;
     private final BiConsumer<Integer, ToolExecutionRequest> partialToolExecutionRequestHandler;
@@ -62,6 +65,7 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
             ChatExecutor chatExecutor,
             AiServiceContext context,
             Object memoryId,
+            BooleanSupplier cancelChecker,
             Consumer<String> partialResponseHandler,
             BiConsumer<Integer, ToolExecutionRequest> partialToolExecutionRequestHandler,
             BiConsumer<Integer, ToolExecutionRequest> completeToolExecutionRequestHandler,
@@ -78,6 +82,7 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
         this.context = ensureNotNull(context, "context");
         this.memoryId = ensureNotNull(memoryId, "memoryId");
         this.methodKey = methodKey;
+        this.cancelChecker = ensureNotNull(cancelChecker, "cancelChecker");
 
         this.partialResponseHandler = ensureNotNull(partialResponseHandler, "partialResponseHandler");
         this.partialToolExecutionRequestHandler = partialToolExecutionRequestHandler;
@@ -97,6 +102,9 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
 
     @Override
     public void onPartialResponse(String partialResponse) {
+        if (isCancelled()) {
+            throw new CancellationException("stream cancelled by client");
+        }
         // If we're using output guardrails, then buffer the partial response until the guardrails have completed
         if (hasOutputGuardrails) {
             responseBuffer.add(partialResponse);
@@ -107,20 +115,44 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
 
     @Override
     public void onPartialToolExecutionRequest(int index, ToolExecutionRequest partialToolExecutionRequest) {
+        if (isCancelled()) {
+            throw new CancellationException("stream cancelled by client");
+        }
         // If we're using output guardrails, then buffer the partial response until the guardrails have completed
         partialToolExecutionRequestHandler.accept(index, partialToolExecutionRequest);
     }
 
     @Override
     public void onCompleteResponse(ChatResponse completeResponse) {
+        if (isCancelled()) {
+            onError(new CancellationException("stream cancelled by client"));
+            return;
+        }
         AiMessage aiMessage = completeResponse.aiMessage();
         addToMemory(aiMessage);
 
         if (aiMessage.hasToolExecutionRequests()) {
             for (ToolExecutionRequest toolExecutionRequest : aiMessage.toolExecutionRequests()) {
+                if (isCancelled()) {
+                    onError(new CancellationException("stream cancelled by client"));
+                    return;
+                }
                 String toolName = toolExecutionRequest.name();
                 ToolExecutor toolExecutor = toolExecutors.get(toolName);
-                String toolExecutionResult = toolExecutor.execute(toolExecutionRequest, memoryId);
+                String toolExecutionResult;
+                if (toolExecutor == null) {
+                    toolExecutionResult = "Error: there is no tool called " + toolName;
+                } else {
+                    try {
+                        toolExecutionResult = toolExecutor.execute(toolExecutionRequest, memoryId);
+                    } catch (CancellationException e) {
+                        LOG.info("Tool execution cancelled, tool={}, memoryId={}", toolName, memoryId);
+                        throw e;
+                    } catch (Exception e) {
+                        LOG.warn("Tool execution failed, tool={}, args={}", toolName, toolExecutionRequest.arguments(), e);
+                        toolExecutionResult = "Error: tool execution failed. reason=" + e.getMessage();
+                    }
+                }
                 ToolExecutionResultMessage toolExecutionResultMessage =
                         ToolExecutionResultMessage.from(toolExecutionRequest, toolExecutionResult);
                 addToMemory(toolExecutionResultMessage);
@@ -134,6 +166,10 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
                 }
             }
 
+            if (isCancelled()) {
+                onError(new CancellationException("stream cancelled by client"));
+                return;
+            }
             ChatRequest chatRequest = ChatRequest.builder()
                     .messages(messagesToSend(memoryId))
                     .toolSpecifications(toolSpecifications)
@@ -143,6 +179,7 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
                     chatExecutor,
                     context,
                     memoryId,
+                    cancelChecker,
                     partialResponseHandler,
                     partialToolExecutionRequestHandler,
                     completeToolExecutionRequestHandler,
@@ -213,6 +250,10 @@ class AiServiceStreamingResponseHandler implements StreamingChatResponseHandler 
 
     private List<ChatMessage> messagesToSend(Object memoryId) {
         return getMemory(memoryId).messages();
+    }
+
+    private boolean isCancelled() {
+        return cancelChecker.getAsBoolean();
     }
 
     @Override

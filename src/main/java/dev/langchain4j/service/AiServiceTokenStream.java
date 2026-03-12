@@ -18,6 +18,7 @@ import dev.langchain4j.service.tool.ToolExecutor;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 import static dev.langchain4j.internal.Utils.copy;
@@ -136,11 +137,13 @@ public class AiServiceTokenStream implements TokenStream {
                 .errorHandler(errorHandler)
                 .chatRequest(chatRequest)
                 .build();
+        BooleanSupplier cancelChecker = StreamingCancellationRegistry.resolve(memoryId);
 
         var handler = new AiServiceStreamingResponseHandler(
                 chatExecutor,
                 context,
                 memoryId,
+                cancelChecker,
                 partialResponseHandler,
                 partialToolExecutionRequestHandler,
                 completeToolExecutionRequestHandler,

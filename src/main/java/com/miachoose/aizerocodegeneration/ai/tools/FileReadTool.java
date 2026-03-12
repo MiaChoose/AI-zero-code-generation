@@ -28,6 +28,7 @@ public class FileReadTool extends BaseTool {
             @ToolMemoryId Long appId
     ) {
         try {
+            throwIfCancelled(appId, getToolName());
             Path path = Paths.get(relativeFilePath);
             if (!path.isAbsolute()) {
                 String projectDirName = "vue_project_" + appId;

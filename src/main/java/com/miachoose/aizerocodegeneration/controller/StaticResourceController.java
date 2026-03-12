@@ -19,8 +19,9 @@ import java.io.File;
 @RequestMapping("/static")
 public class StaticResourceController {
 
-    // 应用生成根目录（用于浏览）
-    private static final String PREVIEW_ROOT_DIR = AppConstant.CODE_OUTPUT_ROOT_DIR;
+    // 优先访问部署目录，其次回退到生成目录（兼容预览和部署访问）
+    private static final String DEPLOY_ROOT_DIR = AppConstant.CODE_DEPLOY_ROOT_DIR;
+    private static final String OUTPUT_ROOT_DIR = AppConstant.CODE_OUTPUT_ROOT_DIR;
 
     /**
      * 提供静态资源访问，支持目录重定向
@@ -44,17 +45,21 @@ public class StaticResourceController {
             if (resourcePath.equals("/")) {
                 resourcePath = "/index.html";
             }
-            // 构建文件路径
-            String filePath = PREVIEW_ROOT_DIR + "/" + deployKey + resourcePath;
-            File file = new File(filePath);
-            // 检查文件是否存在
+            // 构建文件路径：先部署目录，再生成目录
+            String deployFilePath = DEPLOY_ROOT_DIR + "/" + deployKey + resourcePath;
+            File file = new File(deployFilePath);
+            if (!file.exists()) {
+                String outputFilePath = OUTPUT_ROOT_DIR + "/" + deployKey + resourcePath;
+                file = new File(outputFilePath);
+            }
+            // 两个目录都不存在则返回 404
             if (!file.exists()) {
                 return ResponseEntity.notFound().build();
             }
             // 返回文件资源
             Resource resource = new FileSystemResource(file);
             return ResponseEntity.ok()
-                    .header("Content-Type", getContentTypeWithCharset(filePath))
+                    .header("Content-Type", getContentTypeWithCharset(file.getPath()))
                     .body(resource);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

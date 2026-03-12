@@ -77,6 +77,10 @@ public class JsonMessageStreamHandler {
         // 解析 JSON
         StreamMessage streamMessage = JSONUtil.toBean(chunk, StreamMessage.class);
         StreamMessageTypeEnum typeEnum = StreamMessageTypeEnum.getEnumByValue(streamMessage.getType());
+        if (typeEnum == null) {
+            log.warn("未知消息类型，已忽略。raw chunk: {}", chunk);
+            return "";
+        }
         switch (typeEnum) {
             case AI_RESPONSE -> {
                 AiResponseMessage aiMessage = JSONUtil.toBean(chunk, AiResponseMessage.class);
@@ -104,11 +108,21 @@ public class JsonMessageStreamHandler {
             }
             case TOOL_EXECUTED -> {
                 ToolExecutedMessage toolExecutedMessage = JSONUtil.toBean(chunk, ToolExecutedMessage.class);
-                JSONObject jsonObject = JSONUtil.parseObj(toolExecutedMessage.getArguments());
                 // 根据工具名称获取工具实例
                 String toolName = toolExecutedMessage.getName();
                 BaseTool tool = toolManager.getTool(toolName);
-                String result = tool.generateToolExecutedResult(jsonObject);
+                if (tool == null) {
+                    log.warn("工具不存在，已忽略。toolName={}", toolName);
+                    return "";
+                }
+                JSONObject jsonObject = safeParseToolArguments(toolExecutedMessage.getArguments(), toolName);
+                String result;
+                try {
+                    result = tool.generateToolExecutedResult(jsonObject);
+                } catch (Exception e) {
+                    log.warn("工具执行失败，toolName={}, args={}", toolName, toolExecutedMessage.getArguments(), e);
+                    result = String.format("工具 %s 执行失败，已跳过本次结果展示。", toolName);
+                }
                 // 输出前端和要持久化的内容
                 String output = String.format("\n\n%s\n\n", result);
                 chatHistoryStringBuilder.append(output);
@@ -118,6 +132,23 @@ public class JsonMessageStreamHandler {
                 log.error("不支持的消息类型: {}", typeEnum);
                 return "";
             }
+        }
+    }
+
+    /**
+     * 安全解析工具参数，避免流式场景下参数片段不完整导致整条链路中断。
+     */
+    private JSONObject safeParseToolArguments(String arguments, String toolName) {
+        if (StrUtil.isBlank(arguments)) {
+            return new JSONObject();
+        }
+        try {
+            return JSONUtil.parseObj(arguments);
+        } catch (Exception e) {
+            log.warn("工具参数解析失败，toolName={}, rawArgs={}", toolName, arguments, e);
+            JSONObject fallback = new JSONObject();
+            fallback.set("rawArguments", arguments);
+            return fallback;
         }
     }
 }

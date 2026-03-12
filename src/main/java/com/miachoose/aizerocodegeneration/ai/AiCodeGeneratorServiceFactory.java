@@ -55,13 +55,16 @@ public class AiCodeGeneratorServiceFactory {
         // 从数据库中加载对话历史到记忆中
         chatHistoryService.loadChatHistoryToMemory(appId, chatMemory, 20);
         return switch (codeGenType) {
-            // Vue 项目生成，使用工具调用和推理模型
+            // Vue 项目生成，使用工具调用。
+            // 注意：deepseek-reasoner 在工具调用场景下需要 reasoning_content，
+            // 当前 LangChain4j 请求序列不携带该字段，容易触发 400 invalid_request_error。
+            // 因此这里统一使用非 reasoning 的流式模型，保证工具链路稳定。
             case VUE_PROJECT -> {
                 // 使用多例模式的 StreamingChatModel 解决并发问题
-                StreamingChatModel reasoningStreamingChatModel = SpringContextUtil.getBean("reasoningStreamingChatModelPrototype", StreamingChatModel.class);
+                StreamingChatModel openAiStreamingChatModel = SpringContextUtil.getBean("streamingChatModelPrototype", StreamingChatModel.class);
                 yield AiServices.builder(AiCodeGeneratorService.class)
                         .chatModel(chatModel)
-                        .streamingChatModel(reasoningStreamingChatModel)
+                        .streamingChatModel(openAiStreamingChatModel)
                         .chatMemoryProvider(memoryId -> chatMemory)
                         .tools(toolManager.getAllTools())
                         // 处理工具调用幻觉问题

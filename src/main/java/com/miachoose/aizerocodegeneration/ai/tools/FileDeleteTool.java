@@ -28,6 +28,7 @@ public class FileDeleteTool extends BaseTool {
             @ToolMemoryId Long appId
     ) {
         try {
+            throwIfCancelled(appId, getToolName());
             Path path = Paths.get(relativeFilePath);
             if (!path.isAbsolute()) {
                 String projectDirName = "vue_project_" + appId;
@@ -45,6 +46,7 @@ public class FileDeleteTool extends BaseTool {
             if (isImportantFile(fileName)) {
                 return "错误：不允许删除重要文件 - " + fileName;
             }
+            throwIfCancelled(appId, getToolName());
             Files.delete(path);
             log.info("成功删除文件: {}", path.toAbsolutePath());
             return "文件删除成功: " + relativeFilePath;

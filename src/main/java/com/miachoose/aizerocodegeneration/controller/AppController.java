@@ -24,7 +24,9 @@ import com.miachoose.aizerocodegeneration.service.UserService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
@@ -35,6 +37,7 @@ import reactor.core.publisher.Mono;
 
 import java.io.File;
 import java.time.LocalDateTime;
+import java.util.concurrent.CancellationException;
 import java.util.List;
 import java.util.Map;
 
@@ -45,6 +48,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/app")
+@Slf4j
 public class AppController {
 
     @Resource
@@ -60,6 +64,7 @@ public class AppController {
     @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI 对话请求过于频繁，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToGenCode(@RequestParam Long appId,
                                                        @RequestParam String message,
+                                                       @RequestParam(required = false, defaultValue = "") String generationId,
                                                        HttpServletRequest request) {
         // 参数校验
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 id 错误");
@@ -67,7 +72,12 @@ public class AppController {
         // 获取当前登录用户
         User loginUser = userService.getLoginUser(request);
         // 调用服务生成代码（SSE 流式返回）
-        Flux<String> contentFlux = appService.chatToGenCode(appId, message, loginUser);
+        Flux<String> contentFlux = appService.chatToGenCode(appId, message, generationId, loginUser)
+                .doOnCancel(() -> {
+                    // 浏览器刷新/关闭时，SSE 连接会被取消；这里兜底触发服务端取消，避免继续执行工具写文件
+                    appService.cancelChatGeneration(appId, generationId, loginUser);
+                    log.info("检测到 SSE 连接断开，已触发任务取消，appId={}, generationId={}", appId, generationId);
+                });
         return contentFlux
                 .map(chunk -> {
                     Map<String, String> wrapper = Map.of("d", chunk);
@@ -76,6 +86,15 @@ public class AppController {
                             .data(jsonData)
                             .build();
                 })
+                .onErrorResume(CancellationException.class, e -> {
+                    log.info("SSE 生成流已取消，appId={}, generationId={}, reason={}", appId, generationId, e.getMessage());
+                    return Mono.just(
+                            ServerSentEvent.<String>builder()
+                                    .event("cancelled")
+                                    .data(JSONUtil.toJsonStr(Map.of("message", "生成任务已停止")))
+                                    .build()
+                    );
+                })
                 .concatWith(Mono.just(
                         // 发送结束事件
                         ServerSentEvent.<String>builder()
@@ -83,6 +102,20 @@ public class AppController {
                                 .data("")
                                 .build()
                 ));
+    }
+
+    /**
+     * 终止当前应用的代码生成
+     */
+    @PostMapping("/chat/stop")
+    public BaseResponse<Boolean> stopChatGeneration(@RequestParam Long appId,
+                                                    @RequestParam(required = false, defaultValue = "") String generationId,
+                                                    HttpServletRequest request) {
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 id 错误");
+        User loginUser = userService.getLoginUser(request);
+        appService.cancelChatGeneration(appId, generationId, loginUser);
+        log.info("收到前端停止请求，appId={}, generationId={}, userId={}", appId, generationId, loginUser.getId());
+        return ResultUtils.success(true);
     }
 
     /**
@@ -295,6 +328,7 @@ public class AppController {
      */
     @PostMapping("/admin/delete")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    @CacheEvict(value = "good_app_page", allEntries = true)
     public BaseResponse<Boolean> deleteAppByAdmin(@RequestBody DeleteRequest deleteRequest) {
         if (deleteRequest == null || deleteRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
@@ -315,6 +349,7 @@ public class AppController {
      */
     @PostMapping("/admin/update")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    @CacheEvict(value = "good_app_page", allEntries = true)
     public BaseResponse<Boolean> updateAppByAdmin(@RequestBody AppAdminUpdateRequest appAdminUpdateRequest) {
         if (appAdminUpdateRequest == null || appAdminUpdateRequest.getId() == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);

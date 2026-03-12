@@ -30,6 +30,34 @@ public interface AppService extends IService<App> {
     Flux<String> chatToGenCode(Long appId, String message, User loginUser);
 
     /**
+     * 通过对话生成应用代码（带生成会话 ID）
+     *
+     * @param appId         应用 ID
+     * @param message       提示词
+     * @param generationId  本次生成会话 ID
+     * @param loginUser     登录用户
+     * @return
+     */
+    Flux<String> chatToGenCode(Long appId, String message, String generationId, User loginUser);
+
+    /**
+     * 终止指定应用的代码生成任务
+     *
+     * @param appId     应用 ID
+     * @param loginUser 登录用户
+     */
+    void cancelChatGeneration(Long appId, User loginUser);
+
+    /**
+     * 终止指定应用的代码生成任务（指定生成会话 ID）
+     *
+     * @param appId         应用 ID
+     * @param generationId  本次生成会话 ID
+     * @param loginUser     登录用户
+     */
+    void cancelChatGeneration(Long appId, String generationId, User loginUser);
+
+    /**
      * 创建应用
      *
      * @param appAddRequest
